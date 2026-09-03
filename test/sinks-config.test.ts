@@ -4,6 +4,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { applySink } from "../src/sinks.js";
 import { loadConfig } from "../src/config.js";
+import { fileURLToPath } from "node:url";
+
+const EXAMPLE = fileURLToPath(new URL("../../config/jobs.yaml.example", import.meta.url));
 
 let tmp: string;
 beforeEach(() => {
@@ -34,7 +37,7 @@ describe("sinks", () => {
 
 describe("config", () => {
   it("loads the example config", () => {
-    const { jobs } = loadConfig("/home/dom/Projects/pi-cron/config/jobs.yaml.example");
+    const { jobs } = loadConfig(EXAMPLE);
     expect(jobs.length).toBe(3);
     expect(jobs[1].steps.map((s) => s.name)).toEqual(["gather", "triage", "write", "intentions"]);
   });
