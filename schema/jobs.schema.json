@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "pi-cron jobs.yaml",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timezone": { "type": "string" },
+        "overlap": { "enum": ["skip", "parallel"] },
+        "timeoutMs": { "type": "integer", "minimum": 1 },
+        "model": { "type": "string" },
+        "thinking": { "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"] },
+        "piBin": { "type": "string" }
+      }
+    },
+    "jobs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "schedule", "steps"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "schedule": { "type": "string", "minLength": 1 },
+          "timezone": { "type": "string" },
+          "cwd": { "type": "string" },
+          "promptsDir": { "type": "string" },
+          "overlap": { "enum": ["skip", "parallel"] },
+          "timeoutMs": { "type": "integer", "minimum": 1 },
+          "model": { "type": "string" },
+          "thinking": { "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"] },
+          "enabled": { "type": "boolean" },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "run"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "condition": { "type": "string" },
+                "timeoutMs": { "type": "integer", "minimum": 1 },
+                "onFail": { "enum": ["abort", "continue"] },
+                "run": {
+                  "type": "object",
+                  "required": ["type"],
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "type": { "const": "exec" },
+                        "command": { "type": "string", "minLength": 1 }
+                      },
+                      "required": ["type", "command"]
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "type": { "const": "llm" },
+                        "prompt": { "type": "string", "minLength": 1 },
+                        "model": { "type": "string" },
+                        "thinking": { "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"] },
+                        "tools": { "type": "array", "items": { "type": "string" } },
+                        "skills": { "type": "array", "items": { "type": "string" } },
+                        "session": { "type": "string" },
+                        "approve": { "type": "boolean" }
+                      },
+                      "required": ["type", "prompt"]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "report": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["mode"],
+            "properties": {
+              "mode": { "enum": ["file-append", "file-write", "stdout", "none"] },
+              "path": { "type": "string" },
+              "marker": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

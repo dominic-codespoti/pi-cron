@@ -1,0 +1,50 @@
+# pi-cron example config. Copy the jobs you want into
+# <data-dir>/config/jobs.yaml (default ~/.local/share/pi-cron/config/jobs.yaml).
+# The runner never writes that file — state lives in state/state.db.
+
+defaults:
+  timezone: Australia/Melbourne
+  overlap: skip
+  timeoutMs: 300000
+  model: opencode-go/muse-spark-1.3-contributor
+  thinking: medium
+
+jobs:
+  # --- LLM triage: prompt file, high reasoning, read-leaning tools ---
+  - id: vault-inbox-triage
+    schedule: "0 9 * * *"
+    cwd: /home/dom/vaults/Notes
+    promptsDir: prompts/inbox-triage
+    enabled: false
+    steps:
+      - name: triage
+        condition: test $(find "$HOME/vaults/Notes/z. Inbox" -maxdepth 1 -type f -name '*.md' ! -name 'README.md' ! -name 'Inbox.md' | wc -l) -gt 0
+        run: { type: llm, prompt: triage.md, thinking: high, tools: [read, bash, edit, write], skills: [obsidian-vault] }
+    report: { mode: stdout }
+
+  # --- multi-step with a Monday-only step and a vault report sink ---
+  - id: morning-brief
+    schedule: "45 6 * * *"
+    cwd: /home/dom/vaults/Notes
+    promptsDir: prompts/morning-brief
+    enabled: false
+    steps:
+      - name: gather
+        run: { type: exec, command: "./scripts/gather.sh {{SCRATCH}}" }
+      - name: triage
+        run: { type: llm, prompt: triage.md, thinking: high }
+      - name: write
+        run: { type: llm, prompt: write.md }
+      - name: intentions
+        condition: test $(date +%u) -eq 1
+        run: { type: llm, prompt: intentions.md }
+    report: { mode: file-append, path: "/home/dom/vaults/Notes/z. Personal/Routine/Weeks/{WEEK}.md", marker: "brief-{DATE}" }
+
+  # --- plain script job, quiet ---
+  - id: sessions-maintenance
+    schedule: "0 3 * * 0"
+    enabled: false
+    steps:
+      - name: main
+        run: { type: exec, command: "/home/dom/bin/pi-sessions-maintenance.sh" }
+    report: { mode: none }

@@ -1,0 +1,22 @@
+{
+  "name": "pi-cron",
+  "version": "0.1.0",
+  "description": "Scheduled shell + LLM jobs for the Pi coding agent. Declarative YAML, prompt files, SQLite state. Zero runtime dependencies.",
+  "type": "module",
+  "license": "MIT",
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "typebox": "^1.3.25",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  }
+}
