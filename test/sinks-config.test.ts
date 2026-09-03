@@ -6,7 +6,7 @@ import { applySink } from "../src/sinks.js";
 import { loadConfig } from "../src/config.js";
 import { fileURLToPath } from "node:url";
 
-const EXAMPLE = fileURLToPath(new URL("../../config/jobs.yaml.example", import.meta.url));
+const EXAMPLE = fileURLToPath(new URL("../config/jobs.yaml.example", import.meta.url));
 
 let tmp: string;
 beforeEach(() => {
