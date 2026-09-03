@@ -2,6 +2,7 @@
  *  cannot die from stale extension contexts. */
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { CronError } from "./errors.js";
 import { renderVars, baseVars } from "./vars.js";
@@ -27,6 +28,66 @@ export interface RunSummary {
   success: boolean;
   steps: StepResult[];
   reportNote: string;
+}
+
+/** extract the last {...} balanced object after "usage": on a line (handles nested cost:{}) */
+export function extractUsage(line: string): string | undefined {
+  const at = line.indexOf('"usage":{');
+  if (at < 0) return undefined;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  const start = at + 8; // position of opening { ("usage": is 8 chars)
+  for (let i = start; i < line.length; i++) {
+    const ch = line[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          const u = JSON.parse(line.slice(start, i + 1)) as Record<string, unknown>;
+          const num = (v: unknown) => (typeof v === "number" ? v : "?");
+          const cost = num((u.cost as any)?.total);
+          return `input=${num(u.input)} output=${num(u.output)} reasoning=${num(u.reasoning)}${cost === "?" ? "" : ` $${Number(cost).toFixed(4)}`}`;
+        } catch {
+          return undefined;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+/** best-effort usage extraction: session JSONL keeps per-turn {usage} records.
+ *  Never throws — observability must not break runs. */
+export function sessionDirFor(cwd: string): string {
+  const slug = cwd.replace(/^\//, "").replace(/\//g, "-");
+  return path.join(os.homedir(), ".pi", "agent", "sessions", `--${slug}--`);
+}
+
+export function lastUsage(cwd: string, sessionId: string): string | undefined {
+  try {
+    const dir = sessionDirFor(cwd);
+    if (!fs.existsSync(dir)) return undefined;
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith(`_${sessionId}.jsonl`));
+    if (!files.length) return undefined;
+    files.sort();
+    const lines = fs.readFileSync(path.join(dir, files[files.length - 1]), "utf8").trim().split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const extracted = extractUsage(lines[i]);
+      if (extracted) return extracted;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const MAX_OUTPUT = 50 * 1024 * 1024;
@@ -176,6 +237,10 @@ export async function runJob(job: Job, ctx: RunCtx): Promise<RunSummary> {
         log(`step ${step.name}: exit=${r.code} killed=${r.killed} ${dur}ms`);
         if (r.killed) throw new CronError("E_TIMEOUT", `step "${step.name}" exceeded ${timeoutMs}ms`);
         if (r.code !== 0) throw new CronError("E_LLM", `step "${step.name}" pi exited ${r.code}: ${r.stderr.slice(0, 500)}`);
+        if (sess.sessionId) {
+          const usage = lastUsage(built.cwd, sess.sessionId);
+          if (usage) log(`step ${step.name}: usage ${usage}`);
+        }
         steps.push({ name: step.name, exitCode: r.code ?? 0, stdout: r.stdout, durationMs: dur, renderedPromptPath: renderedPath });
       }
     } catch (e: any) {
