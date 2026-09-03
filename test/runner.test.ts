@@ -65,3 +65,17 @@ describe("runner", () => {
     expect(h[0].trigger).toBe("manual");
   });
 });
+
+describe("usage observability", () => {
+  it("sessionDirFor matches Pi slug layout", async () => {
+    const { sessionDirFor, lastUsage } = await import("../src/runner.js");
+    expect(sessionDirFor("/home/dom/.local/share/pi-cron")).toMatch(/--home-dom-\.local-share-pi-cron--$/);
+    expect(lastUsage("/tmp/definitely-not-a-pi-cwd", "nope")).toBeUndefined();
+  });
+  it("extractUsage handles nested cost objects", async () => {
+    const { extractUsage } = await import("../src/runner.js");
+    const line = 'x"usage":{"input":4459,"output":34,"cacheRead":0,"reasoning":15,"totalTokens":4493,"cost":{"input":0.0004,"total":0.0004527}}y';
+    expect(extractUsage(line)).toBe("input=4459 output=34 reasoning=15 $0.0005");
+    expect(extractUsage("no usage here")).toBeUndefined();
+  });
+});
