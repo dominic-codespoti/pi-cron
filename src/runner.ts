@@ -104,9 +104,16 @@ export async function runJob(job: Job, ctx: RunCtx): Promise<RunSummary> {
     const stepVars = { ...vars, STEP: step.name };
     const timeoutMs = step.timeoutMs ?? job.timeoutMs ?? 300_000;
 
-    // condition gate (after scheduling — cheap gates first by convention)
+    // condition gate (after scheduling — cheap gates first by convention).
+    // conditions render the same {{vars}} (e.g. {{SCRATCH}}) as prompts.
     if (step.condition && !aborted) {
-      const c = await execBash(["bash", "-lc", step.condition], { cwd, timeoutMs: 5_000 });
+      let cond: string;
+      try {
+        cond = renderVars(step.condition, stepVars);
+      } catch (e: any) {
+        throw new CronError("E_CONFIG", `step "${step.name}": bad condition template: ${e?.message ?? String(e)}`);
+      }
+      const c = await execBash(["bash", "-lc", cond], { cwd, timeoutMs: 5_000 });
       if (c.code !== 0) {
         log(`step ${step.name}: condition false (exit ${c.code}), skipped`);
         steps.push({ name: step.name, skipped: `condition exit ${c.code}`, stdout: "", durationMs: 0 });
