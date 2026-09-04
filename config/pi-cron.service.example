@@ -1,0 +1,17 @@
+[Unit]
+Description=pi-cron — always-on scheduler backend for Pi jobs
+After=network.target
+Documentation=https://github.com/thed24/pi-ui
+
+[Service]
+Type=simple
+ExecStart=/home/user/.nvm/versions/node/v24.16.0/bin/node /home/user/Projects/pi-cron/dist/src/daemon.js
+WorkingDirectory=/home/user/Projects/pi-cron
+Environment=PATH=/home/user/.local/bin:/home/user/.nvm/versions/node/v24.16.0/bin:/usr/local/bin:/usr/bin:/bin
+Restart=always
+RestartSec=5
+StandardOutput=append:/tmp/pi-cron.log
+StandardError=append:/tmp/pi-cron.log
+
+[Install]
+WantedBy=default.target
