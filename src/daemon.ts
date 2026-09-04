@@ -94,6 +94,37 @@ async function main() {
     }
   }
 
+  // one-shot mode: node dist/src/daemon.js --run <job-id>
+  // Same fire() path as the scheduler (trigger=manual). For out-of-band checks.
+  const runIdx = process.argv.indexOf("--run");
+  if (runIdx !== -1) {
+    const id = process.argv[runIdx + 1];
+    if (!id) {
+      logLine("usage: daemon.js --run <job-id>");
+      process.exit(2);
+    }
+    let jobs: Job[];
+    try {
+      jobs = await loadJobs();
+    } catch (e: unknown) {
+      logLine(`config ERROR: ${e instanceof Error ? e.message : String(e)}`);
+      process.exit(2);
+    }
+    const job = jobs.find((j) => j.id === id);
+    if (!job) {
+      logLine(`job not found: ${id}`);
+      process.exit(2);
+    }
+    logLine(`manual run start ${id}`);
+    await fire(job, "manual");
+    const st = store.state(job.id, job.enabled);
+    logLine(`manual run end ${id} status=${st.lastStatus}`);
+    try {
+      store.close();
+    } catch {}
+    process.exit(st.lastStatus === "success" ? 0 : 1);
+  }
+
   const scheduler = new Scheduler({
     store,
     loadJobs: async () => {

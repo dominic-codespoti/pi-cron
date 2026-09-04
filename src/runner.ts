@@ -193,7 +193,13 @@ export async function runJob(job: Job, ctx: RunCtx): Promise<RunSummary> {
           steps.push({ name: step.name, skipped: "dry-run", stdout: "", durationMs: 0 });
           continue;
         }
-        const r = await execBash(["bash", "-lc", step.run.command], { cwd, timeoutMs });
+        let cmd: string;
+        try {
+          cmd = renderVars(step.run.command, stepVars);
+        } catch (e: any) {
+          throw new CronError("E_CONFIG", `step "${step.name}": bad command template: ${e?.message ?? String(e)}`);
+        }
+        const r = await execBash(["bash", "-lc", cmd], { cwd, timeoutMs });
         const dur = Date.now() - start;
         fs.writeFileSync(path.join(runDir, `${tag}.stdout.log`), r.stdout);
         if (r.stderr) fs.writeFileSync(path.join(runDir, `${tag}.stderr.log`), r.stderr);
