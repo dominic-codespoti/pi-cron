@@ -12,6 +12,8 @@ export interface LlmCtx {
   thinking?: LlmRun["thinking"];
   tools?: string[];
   skills?: string[];
+  /** lean mode: only these extensions load (no discovered extensions/skills/templates) */
+  extensions?: string[];
   approve?: boolean;
 }
 
@@ -38,6 +40,10 @@ export function buildPrintCommand(step: LlmRun, ctx: LlmCtx): BuiltCommand {
   if (ctx.thinking) args.push("--thinking", ctx.thinking);
   if (ctx.tools && ctx.tools.length) args.push("-t", ctx.tools.join(","));
   for (const s of ctx.skills ?? []) args.push("--skill", s);
+  if (ctx.extensions) {
+    args.push("--no-extensions", "--no-skills", "--no-prompt-templates");
+    for (const e of ctx.extensions) args.push("-e", e);
+  }
   if (ctx.approve !== false) args.push("--approve");
   args.push("@" + ctx.promptFile);
   return { cmd: ctx.piBin, args, cwd: ctx.cwd };

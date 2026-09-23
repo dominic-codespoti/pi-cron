@@ -9,8 +9,30 @@ import { renderVars, baseVars } from "./vars.js";
 import { expandPath, resolveConfigPath } from "./config.js";
 import { buildPrintCommand, defaultPromptsDir, sessionArgs } from "./llm.js";
 import { applySink } from "./sinks.js";
+import { classifyFailure, type FailureKind } from "./failureKind.js";
 import type { Defaults, Job, Step, StepResult, Trigger } from "./types.js";
 import type { Store } from "./store.js";
+
+// LLM concurrency semaphore =1 (T5): exec steps stay parallel, LLM `pi --print`
+// steps queue. Prevents morning-burst 07:15-09:30 parallel LLMs from spiking
+// CPU/RAM and causing E_TIMEOUT/429s. In-process only; cross-process still
+// single-flighted by the scheduler lock for the same job.
+let llmSlot: Promise<void> | null = null;
+async function withLlmSlot<T>(fn: () => Promise<T>): Promise<T> {
+  while (llmSlot) {
+    try {
+      await llmSlot;
+    } catch {}
+  }
+  let release!: () => void;
+  llmSlot = new Promise<void>((res) => (release = res));
+  try {
+    return await fn();
+  } finally {
+    llmSlot = null;
+    release();
+  }
+}
 
 export interface RunCtx {
   dataDir: string;
@@ -26,6 +48,7 @@ export interface RunSummary {
   trigger: Trigger;
   runDir: string;
   success: boolean;
+  failureKind: FailureKind;
   steps: StepResult[];
   reportNote: string;
 }
@@ -92,10 +115,17 @@ export function lastUsage(cwd: string, sessionId: string): string | undefined {
 
 const MAX_OUTPUT = 50 * 1024 * 1024;
 
-function execBash(cmd: string[], opts: { cwd: string; timeoutMs: number }): Promise<{ stdout: string; stderr: string; code: number | undefined; killed: boolean }> {
+function execBash(
+  cmd: string[],
+  opts: { cwd: string; timeoutMs: number; env?: Record<string, string> },
+): Promise<{ stdout: string; stderr: string; code: number | undefined; killed: boolean }> {
   return new Promise((resolve) => {
     // stdio stdin:ignore is load-bearing — `pi --print` blocks forever on an open stdin pipe
-    const child = spawn(cmd[0], cmd.slice(1), { cwd: opts.cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(cmd[0], cmd.slice(1), {
+      cwd: opts.cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: opts.env ? { ...process.env, ...opts.env } : process.env,
+    });
     let stdout = "";
     let stderr = "";
     let killed = false;
@@ -233,10 +263,14 @@ export async function runJob(job: Job, ctx: RunCtx): Promise<RunSummary> {
           thinking: step.run.thinking ?? job.thinking,
           tools: step.run.tools,
           skills: (step.run.skills ?? []).map(expandPath),
+          extensions: (step.run.extensions ?? job.extensions)?.map(expandPath),
           approve: step.run.approve,
         });
         log(`step ${step.name}: ${built.cmd} ${built.args.join(" ")}`);
-        const r = await execBash([built.cmd, ...built.args], { cwd: built.cwd, timeoutMs });
+        // Serialize LLM steps across concurrent jobs (T5). Exec steps bypass.
+        // PI_CRON_* lets per-job extensions (cron-guard) pick the step's policy.
+        const env = { PI_CRON_JOB: job.id, PI_CRON_STEP: step.name, PI_CRON_SCRATCH: scratch, PI_CRON_DIR: ctx.dataDir };
+        const r = await withLlmSlot(() => execBash([built.cmd, ...built.args], { cwd: built.cwd, timeoutMs, env }));
         const dur = Date.now() - start;
         fs.writeFileSync(path.join(runDir, `${tag}.stdout.log`), r.stdout);
         if (r.stderr) fs.writeFileSync(path.join(runDir, `${tag}.stderr.log`), r.stderr);
@@ -273,8 +307,10 @@ export async function runJob(job: Job, ctx: RunCtx): Promise<RunSummary> {
     log(reportNote);
   }
   fs.writeFileSync(path.join(runDir, "transcript.jsonl"), transcript.join("\n") + "\n");
-  ctx.store.finishRun(runId, success ? "success" : "failed");
-  log(`run end success=${success}; ${reportNote}`);
+  const failureText = transcript.join("\n") + "\n" + tail;
+  const failureKind: FailureKind = success ? "success" : classifyFailure(failureText);
+  ctx.store.finishRun(runId, failureKind as "success" | "failed");
+  log(`run end success=${success} kind=${failureKind}; ${reportNote}`);
   fs.appendFileSync(path.join(runDir, "transcript.jsonl"), transcript.slice(-3).join("\n") + "\n");
-  return { jobId: job.id, trigger: ctx.trigger, runDir, success, steps, reportNote };
+  return { jobId: job.id, trigger: ctx.trigger, runDir, success, failureKind, steps, reportNote };
 }

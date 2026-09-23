@@ -87,3 +87,34 @@ export function minuteKey(date: Date, timeZone: string): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${p.y}-${pad(p.m)}-${pad(p.d)}T${pad(p.hh)}:${pad(p.mm)}`;
 }
+
+/** Calculate the next matching Date for a parsed cron expression within maxDays (default 35 days) */
+export function nextCronDate(c: ParsedCron, fromDate: Date = new Date(), timeZone: string, maxDays = 35): Date | null {
+  const startMs = Math.floor(fromDate.getTime() / 60000) * 60000 + 60000;
+  const maxMs = startMs + maxDays * 24 * 3600 * 1000;
+  for (let ms = startMs; ms <= maxMs; ms += 60000) {
+    const d = new Date(ms);
+    if (cronMatches(c, d, timeZone)) return d;
+  }
+  return null;
+}
+
+/** Format time delta to next run in concise human format: "in 16h 58m", "in 45m", "in 5d 16h", "due now" */
+export function formatNextRun(targetDate: Date | null, now: Date = new Date()): string {
+  if (!targetDate) return "no upcoming run";
+  const diffMs = targetDate.getTime() - now.getTime();
+  if (diffMs <= 0) return "due now";
+  const diffMins = Math.round(diffMs / 60000);
+  const hours = Math.floor(diffMins / 60);
+  const mins = diffMins % 60;
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    const remH = hours % 24;
+    return remH > 0 ? `in ${days}d ${remH}h` : `in ${days}d`;
+  }
+  if (hours > 0) {
+    return mins > 0 ? `in ${hours}h ${mins}m` : `in ${hours}h`;
+  }
+  return `in ${mins}m`;
+}
+

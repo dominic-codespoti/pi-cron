@@ -5,13 +5,13 @@
  * extension. The extension and daemon single-flight via the SQLite
  * `scheduler` lock (90s TTL), so both can tick; only one fires.
  *
- * Run:  /home/user/.nvm/versions/node/v24.16.0/bin/node dist/daemon.js
+ * Run:  node dist/src/daemon.js   (Node >= 22.5 for node:sqlite)
  * Systemd unit: ~/.config/systemd/user/pi-cron.service
  */
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { loadConfig, expandPath } from "./config.js";
 import { Store } from "./store.js";
@@ -34,6 +34,50 @@ const jobsFile = (dir: string) => path.join(dir, "config", "jobs.yaml");
 function logLine(...parts: unknown[]) {
   const line = `[${new Date().toISOString()}] ${parts.map((p) => (typeof p === "string" ? p : JSON.stringify(p))).join(" ")}`;
   process.stdout.write(line + "\n");
+}
+
+/** Append a remediation ticket (<data-dir>/state/remediation-queue.json) and, when
+ *  `defaults.onFailure` names a job, trigger that job promptly (e.g. a sentinel that
+ *  fixes what it can and pages only when a human must act). Never throws —
+ *  remediation must not break scheduling.
+ *  kind: failed (code, counts to auto-pause) | auth-error | dependency-fail (never counts). */
+function fileRemediationTicket(jobId: string, trigger: Trigger, fails: number, paused: boolean, runDir: string, note: string, kind: string, onFailure: string | undefined): void {
+  const dataDir = path.dirname(path.dirname(runDir));
+  try {
+    const ticketFile = path.join(dataDir, "state", "remediation-queue.json");
+    let tickets: Array<Record<string, unknown>> = [];
+    try {
+      if (fs.existsSync(ticketFile)) {
+        const parsed = JSON.parse(fs.readFileSync(ticketFile, "utf8")) as { tickets?: unknown };
+        if (parsed && typeof parsed === "object" && Array.isArray(parsed.tickets)) {
+          tickets = parsed.tickets as Array<Record<string, unknown>>;
+        }
+      }
+    } catch {
+      tickets = [];
+    }
+    tickets.push({ jobId, trigger, fails, paused, runDir, note, kind, at: new Date().toISOString(), status: "pending" });
+    fs.writeFileSync(ticketFile, JSON.stringify({ tickets: tickets.slice(-50) }, null, 2));
+    logLine(`remediation ticket filed ${jobId} kind=${kind} fails=${fails}/3${paused ? " AUTO-PAUSED" : ""}`);
+  } catch (e: unknown) {
+    logLine(`remediation ticket FAILED for ${jobId}: ${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
+  if (!onFailure || onFailure === jobId) return; // no handler configured, or the handler itself failed
+  try {
+    const daemonJs = process.argv[1];
+    if (daemonJs && fs.existsSync(daemonJs)) {
+      const child = spawn(process.execPath, [daemonJs, "--run", onFailure], {
+        detached: true,
+        stdio: "ignore",
+        cwd: dataDir,
+      });
+      child.unref();
+      logLine(`${onFailure} triggered for ${jobId}`);
+    }
+  } catch (e: unknown) {
+    logLine(`${onFailure} trigger FAILED for ${jobId}: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 async function main() {
@@ -75,17 +119,29 @@ async function main() {
         store.patch(job.id, { fails: 0, lastRunAt: new Date().toISOString(), lastStatus: "success" });
         logLine(`done ${job.id} trigger=${trigger} success ${Date.now() - started}ms ${summary.reportNote} run=${summary.runDir}`);
       } else {
-        const fails = st.fails + 1;
-        const patch: Parameters<Store["patch"]>[1] = { fails, lastRunAt: new Date().toISOString(), lastStatus: "failed" };
-        let paused = false;
-        if (fails >= 3 && st.enabled) {
-          patch.enabled = false;
-          paused = true;
+        // Typed failures (T1): auth-error / dependency-fail never increment fails
+        // and never auto-pause. Only code `failed` counts toward the breaker.
+        const kind = (summary as { failureKind?: string }).failureKind ?? "failed";
+        if (kind === "auth-error" || kind === "dependency-fail") {
+          store.patch(job.id, { lastRunAt: new Date().toISOString(), lastStatus: kind as "auth-error" });
+          logLine(
+            `done ${job.id} trigger=${trigger} ${kind.toUpperCase()} fails=${st.fails}/3 (not counted) ${Date.now() - started}ms ${summary.reportNote} run=${summary.runDir}`,
+          );
+          fileRemediationTicket(job.id, trigger, st.fails, false, summary.runDir, summary.reportNote, kind, defaults.onFailure);
+        } else {
+          const fails = st.fails + 1;
+          const patch: Parameters<Store["patch"]>[1] = { fails, lastRunAt: new Date().toISOString(), lastStatus: "failed" };
+          let paused = false;
+          if (fails >= 3 && st.enabled) {
+            patch.enabled = false;
+            paused = true;
+          }
+          store.patch(job.id, patch);
+          logLine(
+            `done ${job.id} trigger=${trigger} FAILED fails=${fails}/3${paused ? " AUTO-PAUSED" : ""} ${Date.now() - started}ms ${summary.reportNote} run=${summary.runDir}`,
+          );
+          fileRemediationTicket(job.id, trigger, fails, paused, summary.runDir, summary.reportNote, "failed", defaults.onFailure);
         }
-        store.patch(job.id, patch);
-        logLine(
-          `done ${job.id} trigger=${trigger} FAILED fails=${fails}/3${paused ? " AUTO-PAUSED" : ""} ${Date.now() - started}ms ${summary.reportNote} run=${summary.runDir}`,
-        );
       }
     } catch (e: unknown) {
       logLine(`fire ${job.id} ERROR: ${e instanceof Error ? e.message : String(e)}`);

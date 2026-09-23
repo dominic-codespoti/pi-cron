@@ -3,42 +3,47 @@
 # The runner never writes that file — state lives in state/state.db.
 
 defaults:
-  timezone: Australia/Melbourne
+  timezone: Europe/London          # IANA zone; schedules are wall-clock times here
   overlap: skip
   timeoutMs: 300000
-  model: provider/model
+  model: anthropic/claude-sonnet-4-5 # any provider/model your pi is configured for
   thinking: medium
+  # Optional lean mode for every llm step: only these extensions load (no
+  # discovered extensions/skills/prompt templates). cron-guard enforces a
+  # per-step tool policy from <data-dir>/config/cron-guard.json.
+  # extensions:
+  #   - ~/path/to/pi-cron/extensions/cron-guard.ts
 
 jobs:
   # --- LLM triage: prompt file, high reasoning, read-leaning tools ---
-  - id: vault-inbox-triage
+  - id: notes-inbox-triage
     schedule: "0 9 * * *"
-    cwd: /home/user/notes
+    cwd: ~/notes
     promptsDir: prompts/inbox-triage
     enabled: false
     steps:
       - name: triage
-        condition: test $(find "$HOME/notes/inbox" -maxdepth 1 -type f -name '*.md' ! -name 'README.md' ! -name 'Inbox.md' | wc -l) -gt 0
-        run: { type: llm, prompt: triage.md, thinking: high, tools: [read, bash, edit, write], skills: [obsidian-vault] }
+        condition: test $(find "$HOME/notes/inbox" -maxdepth 1 -type f -name '*.md' | wc -l) -gt 0
+        run: { type: llm, prompt: triage.md, thinking: high, tools: [read, grep, find, ls, edit, write] }
     report: { mode: stdout }
 
-  # --- multi-step with a Monday-only step and a vault report sink ---
+  # --- multi-step with a Monday-only step and a file report sink ---
   - id: morning-brief
     schedule: "45 6 * * *"
-    cwd: /home/user/notes
+    cwd: ~/notes
     promptsDir: prompts/morning-brief
     enabled: false
     steps:
       - name: gather
         run: { type: exec, command: "./scripts/gather.sh {{SCRATCH}}" }
       - name: triage
-        run: { type: llm, prompt: triage.md, thinking: high }
+        run: { type: llm, prompt: triage.md, thinking: high, tools: [read, write] }
       - name: write
-        run: { type: llm, prompt: write.md }
+        run: { type: llm, prompt: write.md, tools: [read, write] }
       - name: intentions
         condition: test $(date +%u) -eq 1
-        run: { type: llm, prompt: intentions.md }
-    report: { mode: file-append, path: "/home/user/notes/weeks/{WEEK}.md", marker: "brief-{DATE}" }
+        run: { type: llm, prompt: intentions.md, tools: [read, write] }
+    report: { mode: file-append, path: "~/notes/weeks/{WEEK}.md", marker: "brief-{DATE}" }
 
   # --- plain script job, quiet ---
   - id: sessions-maintenance
@@ -46,5 +51,5 @@ jobs:
     enabled: false
     steps:
       - name: main
-        run: { type: exec, command: "/home/user/bin/pi-sessions-maintenance.sh" }
+        run: { type: exec, command: "~/bin/pi-sessions-maintenance.sh" }
     report: { mode: none }

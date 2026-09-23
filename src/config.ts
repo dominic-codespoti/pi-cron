@@ -57,6 +57,17 @@ function validateStep(raw: unknown, i: number, jobId: string, errors: string[]):
   }
   checkKeys(raw, ["name", "condition", "timeoutMs", "onFail", "run"], where, errors);
   const name = reqStr(raw, "name", where, errors);
+  // T3 gate lint: `test -s *.json` / file_nonempty on JSON fires on `[]` (2 bytes).
+  // Require gates/json_array_len.py for *.json conditions.
+  const condRaw = (raw as Record<string, unknown>).condition;
+  if (typeof condRaw === "string") {
+    if (/test\s+-s\s+\S*\.json/.test(condRaw)) {
+      errors.push(`${where}: condition uses \`test -s *.json\` which fires on empty array [] — use scripts/gates/json_array_len.py <file> instead`);
+    }
+    if (/file_nonempty\.py\s+\S*\.json/.test(condRaw)) {
+      errors.push(`${where}: condition uses file_nonempty.py on *.json which fires on empty array [] — use scripts/gates/json_array_len.py <file> instead`);
+    }
+  }
   if (raw.timeoutMs !== undefined && (!Number.isInteger(raw.timeoutMs) || (raw.timeoutMs as number) <= 0)) {
     errors.push(`${where}: timeoutMs must be a positive integer (ms)`);
   }
@@ -72,12 +83,12 @@ function validateStep(raw: unknown, i: number, jobId: string, errors: string[]):
     checkKeys(run, ["type", "command"], `${where}.run`, errors);
     reqStr(run as Record<string, unknown>, "command", `${where}.run`, errors);
   } else if (run.type === "llm") {
-    checkKeys(run, ["type", "prompt", "model", "thinking", "tools", "skills", "session", "approve"], `${where}.run`, errors);
+    checkKeys(run, ["type", "prompt", "model", "thinking", "tools", "skills", "extensions", "session", "approve"], `${where}.run`, errors);
     reqStr(run as Record<string, unknown>, "prompt", `${where}.run`, errors);
     if (run.thinking !== undefined && !THINKING.has(run.thinking as string)) {
       errors.push(`${where}.run: thinking must be one of ${[...THINKING].join("|")}`);
     }
-    for (const k of ["tools", "skills"]) {
+    for (const k of ["tools", "skills", "extensions"]) {
       const v = (run as Record<string, unknown>)[k];
       if (v !== undefined && (!Array.isArray(v) || !(v as unknown[]).every((x) => typeof x === "string"))) {
         errors.push(`${where}.run: ${k} must be a string list`);
@@ -98,11 +109,13 @@ function validateJob(raw: unknown, i: number, errors: string[]): Job | undefined
   }
   checkKeys(
     raw,
-    ["id", "schedule", "timezone", "cwd", "promptsDir", "overlap", "timeoutMs", "model", "thinking", "enabled", "steps", "report"],
+    ["id", "name", "description", "schedule", "timezone", "cwd", "promptsDir", "overlap", "timeoutMs", "model", "thinking", "extensions", "enabled", "steps", "report"],
     where,
     errors,
   );
   const id = reqStr(raw, "id", where, errors);
+  optStr(raw, "name", where, errors);
+  optStr(raw, "description", where, errors);
   const schedule = reqStr(raw, "schedule", where, errors);
   if (schedule) {
     try {
@@ -119,6 +132,9 @@ function validateJob(raw: unknown, i: number, errors: string[]): Job | undefined
   }
   if (raw.enabled !== undefined && typeof raw.enabled !== "boolean") {
     errors.push(`job "${id || i}": enabled must be boolean`);
+  }
+  if (raw.extensions !== undefined && (!Array.isArray(raw.extensions) || !raw.extensions.every((x) => typeof x === "string"))) {
+    errors.push(`job "${id || i}": extensions must be a string list`);
   }
   const stepsRaw = raw.steps;
   const steps: Step[] = [];
@@ -169,6 +185,9 @@ export function loadConfig(file: string): LoadedConfig {
   if (!isObj(doc)) throw new CronError("E_CONFIG", `${file}: top level must be a mapping`);
   checkKeys(doc, ["defaults", "jobs"], "config", errors);
   const defaults = (isObj(doc.defaults) ? (doc.defaults as Defaults) : {}) ?? {};
+  if (defaults.extensions !== undefined && (!Array.isArray(defaults.extensions) || !defaults.extensions.every((x) => typeof x === "string"))) {
+    errors.push("defaults: extensions must be a string list");
+  }
   if (!Array.isArray(doc.jobs)) {
     errors.push("config: jobs must be a list");
   }
@@ -201,6 +220,7 @@ function applyDefaults(job: Job, d: Defaults): Job {
     timeoutMs: job.timeoutMs ?? d.timeoutMs ?? 300_000,
     model: job.model ?? d.model,
     thinking: job.thinking ?? d.thinking,
+    extensions: job.extensions ?? d.extensions,
     enabled: job.enabled ?? true,
   };
 }

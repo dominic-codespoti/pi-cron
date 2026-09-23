@@ -87,7 +87,7 @@ export class Store {
     return Number(r.lastInsertRowid);
   }
 
-  finishRun(runId: number, status: "success" | "failed") {
+  finishRun(runId: number, status: "success" | "failed" | "auth-error" | "dependency-fail") {
     this.db.prepare("UPDATE runs SET status=?, ended_at=datetime('now') WHERE id=?").run(status, runId);
   }
 

@@ -65,19 +65,20 @@ export class Scheduler {
       const key = minuteKey(now, tz);
       if (st.lastFireMinute === key) continue; // already fired this minute
       if (job.overlap !== "parallel" && running.has(job.id)) continue; // skip overlapping
-      // claim the minute before firing (crash-safe-ish: refire only after restart edge)
-      try {
-        store.patch(job.id, { lastFireMinute: key });
-      } catch {
-        continue;
-      }
-      // cross-process single-flight
+      // cross-process single-flight first; minute claimed AFTER fire so a crash
+      // during fire leaves the slot unclaimed and allows refire on restart.
+      // In-process double-fire within the same minute is still prevented by
+      // `running`, and cross-process by the scheduler lock held across fire.
       if (!store.acquireLock("scheduler", this.owner)) continue;
       try {
         store.heartbeat("scheduler", this.owner);
         await fire(job);
       } finally {
-        // keep lock for next ticks; heartbeat refreshes ownership
+        try {
+          store.patch(job.id, { lastFireMinute: key });
+        } catch {
+          // patch failure must not break scheduling; next tick will retry
+        }
       }
     }
   }

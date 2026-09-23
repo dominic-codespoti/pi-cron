@@ -1,0 +1,16 @@
+{
+  "defaults": {
+    "writeRoots": ["~/notes"],
+    "secretPaths": ["~/.config/my-mail-cli", "~/.config/my-backup-tool"],
+    "protectedPaths": []
+  },
+  "steps": {
+    "notes-inbox-triage/triage": {
+      "bash": { "allow": ["ls", "find", "grep", "head", "wc", "file", "mkdir", "mv"] }
+    },
+    "ci-fixer/remediate": {
+      "bash": "open",
+      "writeRoots": ["/tmp/ci-fixer"]
+    }
+  }
+}

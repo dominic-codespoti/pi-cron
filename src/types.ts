@@ -21,6 +21,9 @@ export interface LlmRun {
   tools?: string[];
   /** --skill paths (absolute or ~/..) */
   skills?: string[];
+  /** lean extension set: when set, pi runs with --no-extensions --no-skills
+   *  --no-prompt-templates and loads only these -e paths. Overrides job/defaults. */
+  extensions?: string[];
   /** default "week" */
   session?: SessionScope;
   /** pass --approve so project-local files are trusted. default true */
@@ -48,6 +51,8 @@ export interface ReportSink {
 
 export interface Job {
   id: string;
+  name?: string;
+  description?: string;
   schedule: string;
   timezone?: string;
   /** cwd for exec steps and default pi cwd. default: data dir */
@@ -58,6 +63,8 @@ export interface Job {
   timeoutMs?: number;
   model?: string;
   thinking?: ThinkingLevel;
+  /** lean extension set for this job's llm steps (see LlmRun.extensions) */
+  extensions?: string[];
   enabled: boolean;
   steps: Step[];
   report?: ReportSink;
@@ -69,6 +76,10 @@ export interface Defaults {
   timeoutMs?: number;
   model?: string;
   thinking?: ThinkingLevel;
+  /** default lean extension set for llm steps (see LlmRun.extensions) */
+  extensions?: string[];
+  /** job id the daemon runs after any failed run (e.g. a sentinel); unset = ticket only */
+  onFailure?: string;
   piBin?: string;
 }
 
@@ -82,7 +93,7 @@ export interface JobState {
   enabled: boolean;
   fails: number;
   lastRunAt?: string;
-  lastStatus?: "success" | "failed" | "skipped";
+  lastStatus?: "success" | "failed" | "auth-error" | "dependency-fail" | "skipped";
   lastFireMinute?: string;
 }
 

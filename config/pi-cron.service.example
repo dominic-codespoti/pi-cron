@@ -1,17 +1,20 @@
 [Unit]
 Description=pi-cron — always-on scheduler backend for Pi jobs
 After=network.target
-Documentation=https://github.com/thed24/pi-ui
+Documentation=https://github.com/dominic-codespoti/pi-cron
 
+# Install: copy to ~/.config/systemd/user/pi-cron.service, adjust the node path
+# (Node >= 22.5, for node:sqlite) and the checkout path, then
+#   systemctl --user daemon-reload && systemctl --user enable --now pi-cron
 [Service]
 Type=simple
-ExecStart=/home/user/.nvm/versions/node/v24.16.0/bin/node /home/user/Projects/pi-cron/dist/src/daemon.js
-WorkingDirectory=/home/user/Projects/pi-cron
-Environment=PATH=/home/user/.local/bin:/home/user/.nvm/versions/node/v24.16.0/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env node %h/pi-cron/dist/src/daemon.js
+WorkingDirectory=%h/pi-cron
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Restart=always
 RestartSec=5
-StandardOutput=append:/tmp/pi-cron.log
-StandardError=append:/tmp/pi-cron.log
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=default.target

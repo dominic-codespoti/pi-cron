@@ -15,7 +15,7 @@ describe("sessionArgs", () => {
 describe("buildPrintCommand", () => {
   it("builds golden argv for a week-scoped triage step", () => {
     const b = buildPrintCommand(
-      { type: "llm", prompt: "triage.md", thinking: "high", tools: ["read", "bash"], skills: ["/s/obsidian-vault"] },
+      { type: "llm", prompt: "triage.md", thinking: "high", tools: ["read", "bash"], skills: ["/s/notes-skill"] },
       {
         piBin: "/home/user/.local/bin/pi",
         promptFile: "/tmp/r/01-triage.prompt.rendered.md",
@@ -24,7 +24,7 @@ describe("buildPrintCommand", () => {
         model: "provider/model",
         thinking: "high",
         tools: ["read", "bash"],
-        skills: ["/s/obsidian-vault"],
+        skills: ["/s/notes-skill"],
         approve: true,
       },
     );
@@ -42,7 +42,7 @@ describe("buildPrintCommand", () => {
         "-t",
         "read,bash",
         "--skill",
-        "/s/obsidian-vault",
+        "/s/notes-skill",
         "--approve",
         "@/tmp/r/01-triage.prompt.rendered.md",
       ],
@@ -54,5 +54,25 @@ describe("buildPrintCommand", () => {
       { piBin: "pi", promptFile: "/tmp/p.md", cwd: "/tmp", noSession: true },
     );
     expect(b.args).toEqual(["--print", "--no-session", "--approve", "@/tmp/p.md"]);
+  });
+  it("lean mode disables discovery and loads only listed extensions; explicit skills still pass", () => {
+    const b = buildPrintCommand(
+      { type: "llm", prompt: "p.md" },
+      {
+        piBin: "pi",
+        promptFile: "/tmp/p.md",
+        cwd: "/tmp",
+        noSession: true,
+        tools: ["read", "write"],
+        skills: ["/s/profile/SKILL.md"],
+        extensions: ["/x/memory-bootstrap.ts", "/x/cron-guard.ts"],
+      },
+    );
+    expect(b.args).toEqual([
+      "--print", "--no-session", "-t", "read,write", "--skill", "/s/profile/SKILL.md",
+      "--no-extensions", "--no-skills", "--no-prompt-templates",
+      "-e", "/x/memory-bootstrap.ts", "-e", "/x/cron-guard.ts",
+      "--approve", "@/tmp/p.md",
+    ]);
   });
 });

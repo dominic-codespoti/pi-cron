@@ -56,7 +56,7 @@ No special field — plain conditions:
 
 `schedule_job` (single-step quick adds; complex jobs belong in YAML),
 `list_jobs`, `run_job`, `remove_job`, `update_job`, `resume_job`,
-`validate_config`, `job_history`. Commands: `/jobs`, `/jobs logs <id>`.
+`validate_config`, `job_history`. Commands: `/jobs`, `/jobs logs <id>`, `/jobs resume <id>`, and `/tasks` (toggle a live tree view of jobs above the editor; `/tasks on|off` to force).
 
 Data dir: `~/.local/share/pi-cron`, override with `PI_CRON_DIR`.
 
@@ -67,6 +67,28 @@ and step scripts as code (review them like scripts). No secrets in YAML (use
 `${ENV}` references). `llm` steps get `--approve` by default; read-only steps
 should omit `edit,write` from `tools`. No telemetry, no network calls of its
 own — everything a job touches is declared in its steps.
+
+### Untrusted input: lean mode + cron-guard
+
+Unattended llm steps that read outside text (email, feeds, CI logs) are a
+prompt-injection target. Two opt-in layers help:
+
+- **Lean mode** — set `extensions: [...]` (in `defaults`, a job, or a step).
+  pi then runs with `--no-extensions --no-skills --no-prompt-templates` and loads
+  only the listed `-e` files; explicit `skills:` still load. Faster and smaller,
+  and the step can only call what `tools:` allows.
+- **`extensions/cron-guard.ts`** — add it to that list. It blocks tool calls
+  before they run: secret paths for every tool (built-in list + your
+  `secretPaths`), writes outside the run scratch dir / `/tmp/pi-cron` / your
+  `writeRoots`, writes to pi config, the pi-cron data dir and shell rc files,
+  and bash per step (`deny` by default, `{ "allow": [...] }` for one simple
+  command with operands inside the write roots, or `open`). Blocks are logged to
+  `<data-dir>/state/cron-guard.log`. Policy lives in
+  `<data-dir>/config/cron-guard.json` — see `config/cron-guard.json.example`.
+
+Guards reduce blast radius; they do not make injection impossible. Prefer steps
+that read untrusted text without `bash`, and let deterministic exec steps act on
+the model's JSON decisions.
 
 ## Troubleshooting
 

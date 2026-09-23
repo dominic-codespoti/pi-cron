@@ -4,3 +4,9 @@ state/
 runs/
 config/jobs.yaml
 *.log
+
+# instance content lives outside this repo
+/prompts/
+/scripts/*
+!/scripts/examples/
+/extensions/*.json
