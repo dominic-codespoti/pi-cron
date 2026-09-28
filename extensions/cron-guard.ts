@@ -34,7 +34,7 @@ interface StepPolicy {
   writeRoots?: string[];
 }
 interface PolicyFile {
-  defaults?: { writeRoots?: string[]; secretPaths?: string[]; protectedPaths?: string[] };
+  defaults?: { writeRoots?: string[]; secretPaths?: string[]; protectedPaths?: string[]; denyPaths?: string[] };
   steps?: Record<string, StepPolicy>;
 }
 
@@ -135,6 +135,7 @@ export default function (pi: ExtensionAPI) {
   const bashPolicy: BashPolicy = policy.bash ?? "deny";
   const abs = (list: string[] | undefined) => (list ?? []).map((p) => expand(p, HOME));
   const SECRET_PATHS = [...abs(BUILTIN_SECRETS), ...abs(file.defaults?.secretPaths)];
+  const DENY_PATHS = file.defaults?.denyPaths ?? [];
   const NEVER_WRITE = [
     ...abs(BUILTIN_PROTECTED),
     ...["config", "state", "scripts", "prompts"].map((d) => path.join(dataDir, d)),
@@ -169,6 +170,25 @@ export default function (pi: ExtensionAPI) {
     const input = event.input as Record<string, unknown>;
     const cwd = process.cwd();
     const tool = event.toolName;
+
+    const deniedPath = (value: string) => {
+      const candidate = real(expand(value, cwd));
+      return DENY_PATHS.some((prefix) => within(candidate, real(expand(prefix, cwd))));
+    };
+    for (const key of ["path", "file_path", "paths"]) {
+      const value = input[key];
+      const candidates = typeof value === "string" ? [value] : Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+      for (const candidate of candidates) {
+        if (deniedPath(candidate)) return deny(tool, `denied path ${candidate}`);
+      }
+    }
+    if (tool === "bash" && typeof input.command === "string") {
+      const command = input.command.replace(/~(?=\/)/g, HOME);
+      for (const prefix of DENY_PATHS) {
+        const absolute = real(expand(prefix, cwd));
+        if (command.includes(prefix) || command.includes(absolute)) return deny(tool, `command references denied path ${prefix}`);
+      }
+    }
 
     if (tool === "read" || tool === "grep" || tool === "find" || tool === "ls") {
       const p = real(expand(typeof input.path === "string" && input.path ? input.path : ".", cwd));
