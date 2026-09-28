@@ -109,19 +109,40 @@ function validateJob(raw: unknown, i: number, errors: string[]): Job | undefined
   }
   checkKeys(
     raw,
-    ["id", "name", "description", "schedule", "timezone", "cwd", "promptsDir", "overlap", "timeoutMs", "model", "thinking", "extensions", "enabled", "steps", "report"],
+    ["id", "name", "description", "schedule", "once", "runAt", "graceMs", "timezone", "cwd", "promptsDir", "overlap", "timeoutMs", "model", "thinking", "extensions", "enabled", "steps", "report"],
     where,
     errors,
   );
   const id = reqStr(raw, "id", where, errors);
   optStr(raw, "name", where, errors);
   optStr(raw, "description", where, errors);
-  const schedule = reqStr(raw, "schedule", where, errors);
-  if (schedule) {
-    try {
-      parseCron(schedule);
-    } catch (e: any) {
-      errors.push(`job "${id || i}": ${e?.message ?? String(e)}`);
+  const once = raw.once === true;
+  let schedule: string | undefined;
+  if (once) {
+    if (raw.schedule !== undefined) {
+      errors.push(`job "${id || i}": "schedule" must not be set for once jobs (use "runAt")`);
+    }
+    const runAt = reqStr(raw, "runAt", where, errors);
+    if (runAt && Number.isNaN(Date.parse(runAt))) {
+      errors.push(`job "${id || i}": "runAt" must be a parseable ISO datetime (offset or Z required)`);
+    }
+    if (raw.graceMs !== undefined && (!Number.isInteger(raw.graceMs) || (raw.graceMs as number) < 0)) {
+      errors.push(`job "${id || i}": "graceMs" must be an integer >= 0`);
+    }
+  } else {
+    if (raw.runAt !== undefined) {
+      errors.push(`job "${id || i}": "runAt" requires "once: true"`);
+    }
+    if (raw.graceMs !== undefined) {
+      errors.push(`job "${id || i}": "graceMs" requires "once: true"`);
+    }
+    schedule = reqStr(raw, "schedule", where, errors);
+    if (schedule) {
+      try {
+        parseCron(schedule);
+      } catch (e: any) {
+        errors.push(`job "${id || i}": ${e?.message ?? String(e)}`);
+      }
     }
   }
   if (raw.overlap !== undefined && raw.overlap !== "skip" && raw.overlap !== "parallel") {
@@ -171,6 +192,62 @@ function validateJob(raw: unknown, i: number, errors: string[]): Job | undefined
 export interface LoadedConfig {
   defaults: Defaults;
   jobs: Job[];
+}
+
+/**
+ * Load the ephemeral one-shot sidecar (config/jobs.once.yaml).
+ * Missing or empty file means no pending one-shots. Every entry must be a
+ * valid `once: true` job — recurring jobs belong in jobs.yaml. This file is
+ * live-only (never committed): the harness job tools only read jobs.yaml,
+ * so one-shots here never break list_jobs/validate_config.
+ */
+export function loadOnceJobs(file: string): Job[] {
+  let doc: unknown;
+  try {
+    doc = yaml.load(fs.readFileSync(file, "utf8"));
+  } catch (e: any) {
+    if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return [];
+    throw new CronError("E_CONFIG", `cannot parse ${file}: ${e?.message ?? String(e)}`, {
+      next: "fix jobs.once.yaml or delete it",
+    });
+  }
+  if (doc === null || doc === undefined) return [];
+  if (!isObj(doc)) throw new CronError("E_CONFIG", `${file}: top level must be a mapping`);
+  const errors: string[] = [];
+  const rawJobs = (doc as Record<string, unknown>).jobs;
+  if (rawJobs === undefined || rawJobs === null) return [];
+  if (!Array.isArray(rawJobs)) {
+    throw new CronError("E_CONFIG", `${file}: jobs must be a list`);
+  }
+  const jobs: Job[] = [];
+  const ids = new Set<string>();
+  rawJobs.forEach((j, i) => {
+    const job = validateJob(j, i, errors);
+    if (!job) return;
+    if (job.once !== true) {
+      errors.push(`jobs.once.yaml job "${job.id}": must set "once: true" (recurring jobs belong in jobs.yaml)`);
+      return;
+    }
+    if (ids.has(job.id)) errors.push(`duplicate job id "${job.id}"`);
+    ids.add(job.id);
+    jobs.push(job);
+  });
+  if (errors.length) {
+    throw new CronError("E_CONFIG", `${file}: ${errors.length} problem(s):\n- ` + errors.join("\n- "));
+  }
+  return jobs;
+}
+
+/** Merge main + one-shot lists; an id in both files is a fail-fast error. */
+export function mergeJobLists(main: Job[], once: Job[]): Job[] {
+  const ids = new Set(main.map((j) => j.id));
+  for (const j of once) {
+    if (ids.has(j.id)) {
+      throw new CronError("E_CONFIG", `duplicate job id "${j.id}" across jobs.yaml and jobs.once.yaml`);
+    }
+    ids.add(j.id);
+  }
+  return [...main, ...once];
 }
 
 /** load + validate; throws CronError listing all problems (fail-fast with full detail) */

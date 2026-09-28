@@ -13,7 +13,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { loadConfig, expandPath } from "./config.js";
+import { loadConfig, loadOnceJobs, mergeJobLists, expandPath } from "./config.js";
 import { Store } from "./store.js";
 import { Scheduler } from "./scheduler.js";
 import { runJob } from "./runner.js";
@@ -30,6 +30,7 @@ function ensureDirs(dir: string) {
 }
 
 const jobsFile = (dir: string) => path.join(dir, "config", "jobs.yaml");
+const onceJobsFile = (dir: string) => path.join(dir, "config", "jobs.once.yaml");
 
 function logLine(...parts: unknown[]) {
   const line = `[${new Date().toISOString()}] ${parts.map((p) => (typeof p === "string" ? p : JSON.stringify(p))).join(" ")}`;
@@ -101,7 +102,11 @@ async function main() {
   }
 
   async function loadJobs(): Promise<Job[]> {
-    return loadConfig(jobsFile(dir)).jobs;
+    // Ephemeral one-shots live in config/jobs.once.yaml (live-only, never
+    // committed): the harness job tools only read jobs.yaml, so one-shots
+    // here never break list_jobs/validate_config. Reloaded every tick.
+    const main = loadConfig(jobsFile(dir)).jobs;
+    return mergeJobLists(main, loadOnceJobs(onceJobsFile(dir)));
   }
 
   async function fire(job: Job, trigger: Trigger): Promise<void> {
@@ -181,6 +186,32 @@ async function main() {
     process.exit(st.lastStatus === "success" ? 0 : 1);
   }
 
+  // visibility for ephemeral one-shots: harness list_jobs only reads
+  // jobs.yaml, so this is how you see what's pending in jobs.once.yaml.
+  if (process.argv.includes("--list-once")) {
+    let jobs: Job[];
+    try {
+      jobs = await loadJobs();
+    } catch (e: unknown) {
+      logLine(`config ERROR: ${e instanceof Error ? e.message : String(e)}`);
+      process.exit(2);
+    }
+    const once = jobs.filter((j) => j.once === true);
+    if (!once.length) {
+      logLine("no pending one-shot jobs");
+    }
+    for (const j of once) {
+      const st = store.state(j.id, j.enabled);
+      logLine(
+        `${st.enabled ? "●" : "⛔"} ${j.id} once ${j.runAt ?? "?"} fails:${st.fails}/3 last:${st.lastRunAt ?? "never"} ${st.lastStatus ?? ""}`
+      );
+    }
+    try {
+      store.close();
+    } catch {}
+    process.exit(0);
+  }
+
   const scheduler = new Scheduler({
     store,
     loadJobs: async () => {
@@ -219,7 +250,7 @@ async function main() {
     const { jobs, defaults } = loadConfig(jobsFile(dir));
     const states = jobs.map((j) => {
       const st = store.state(j.id, j.enabled);
-      return `${st.enabled ? "●" : "⛔"} ${j.id} @ ${j.schedule} fails:${st.fails}/3 last:${st.lastRunAt ?? "never"}`;
+      return `${st.enabled ? "●" : "⛔"} ${j.id} @ ${j.once === true ? `once ${j.runAt ?? "?"}` : j.schedule} fails:${st.fails}/3 last:${st.lastRunAt ?? "never"}`;
     });
     logLine(`pi-cron daemon start owner=${owner} dir=${dir} tz=${defaults.timezone ?? "system"} jobs=${jobs.length}`);
     for (const s of states) logLine(`  ${s}`);

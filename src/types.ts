@@ -53,7 +53,21 @@ export interface Job {
   id: string;
   name?: string;
   description?: string;
-  schedule: string;
+  /** cron expression; required unless `once` is true (then it must be absent). */
+  schedule?: string;
+  /**
+   * Ephemeral one-shot: fire once at `runAt`, then auto-disable.
+   * Requires `runAt`; forbids `schedule`.
+   */
+  once?: boolean;
+  /** Absolute fire time for one-shots (ISO datetime, offset or Z required). */
+  runAt?: string;
+  /**
+   * Late-fire grace for one-shots: fire if the daemon was down at `runAt`
+   * but back within this window; older than this is marked missed.
+   * Default 86_400_000 (24h); 0 = unlimited catch-up.
+   */
+  graceMs?: number;
   timezone?: string;
   /** cwd for exec steps and default pi cwd. default: data dir */
   cwd?: string;

@@ -15,7 +15,7 @@ import { Type } from "typebox";
 import { loadConfig, expandPath } from "./config.js";
 import { parseCron, nextCronDate, formatNextRun } from "./cron.js";
 import { Store } from "./store.js";
-import { Scheduler } from "./scheduler.js";
+import { Scheduler, DEFAULT_ONCE_GRACE_MS } from "./scheduler.js";
 import { runJob } from "./runner.js";
 import { defaultPromptsDir } from "./llm.js";
 import { CronError } from "./errors.js";
@@ -274,19 +274,24 @@ const SYSTEM_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
         const yamlEn = j.enabled ? "YAML:on" : "YAML:off";
         const dbEn = st.enabled ? "DB:on" : "DB:off";
         const drift = j.enabled !== st.enabled ? " ⚠drift" : "";
+        const when = j.once === true ? `once ${j.runAt ?? "?"}` : j.schedule;
         let nextStr = "";
         if (st.enabled) {
-          try {
-            const c = parseCron(j.schedule);
-            const next = nextCronDate(c, now, j.timezone ?? SYSTEM_TZ);
-            nextStr = ` (next: ${formatNextRun(next, now)})`;
-          } catch {
-            nextStr = "";
+          if (j.once === true && j.runAt && !Number.isNaN(Date.parse(j.runAt))) {
+            nextStr = ` (next: ${formatNextRun(new Date(j.runAt), now)})`;
+          } else if (j.schedule) {
+            try {
+              const c = parseCron(j.schedule);
+              const next = nextCronDate(c, now, j.timezone ?? SYSTEM_TZ);
+              nextStr = ` (next: ${formatNextRun(next, now)})`;
+            } catch {
+              nextStr = "";
+            }
           }
         } else {
           nextStr = st.fails >= 3 ? " (auto-paused)" : " (paused)";
         }
-        return `${icon} ${j.id} — ${desc} @ ${j.schedule}${nextStr} [${yamlEn}/${dbEn}${drift}] fails:${st.fails}/3 last:${st.lastRunAt ?? "never"} ${st.lastStatus ?? ""}`;
+        return `${icon} ${j.id} — ${desc} @ ${when}${nextStr} [${yamlEn}/${dbEn}${drift}] fails:${st.fails}/3 last:${st.lastRunAt ?? "never"} ${st.lastStatus ?? ""}`;
       });
       return { content: [{ type: "text", text: lines.join("\n") }], details: {} };
     },
@@ -471,13 +476,22 @@ const SYSTEM_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
       let nextPill: string;
       if (st.enabled) {
-        try {
-          const c = parseCron(j.schedule);
-          const next = nextCronDate(c, now, j.timezone ?? SYSTEM_TZ);
-          const timeStr = formatNextRun(next, now);
-          nextPill = theme.fg("accent", `(${timeStr})`);
-        } catch {
-          nextPill = theme.fg("dim", `(@ ${j.schedule})`);
+        if (j.once === true) {
+          const t = j.runAt ? Date.parse(j.runAt) : NaN;
+          nextPill = Number.isNaN(t)
+            ? theme.fg("error", "(invalid runAt)")
+            : theme.fg("accent", `(${formatNextRun(new Date(t), now)})`);
+        } else if (!j.schedule) {
+          nextPill = theme.fg("dim", "(no schedule)");
+        } else {
+          try {
+            const c = parseCron(j.schedule);
+            const next = nextCronDate(c, now, j.timezone ?? SYSTEM_TZ);
+            const timeStr = formatNextRun(next, now);
+            nextPill = theme.fg("accent", `(${timeStr})`);
+          } catch {
+            nextPill = theme.fg("dim", `(@ ${j.schedule})`);
+          }
         }
       } else {
         nextPill = st.fails >= 3 ? theme.fg("error", "(auto-paused)") : theme.fg("dim", "(paused)");
@@ -640,14 +654,22 @@ const SYSTEM_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
           }
           const st = store.state(job.id, job.enabled);
           const desc = job.description || job.name || fallbackDescription(job.id);
-          const c = parseCron(job.schedule);
-          const next = nextCronDate(c, new Date(), job.timezone ?? SYSTEM_TZ);
-          const nextStr = formatNextRun(next, new Date());
+          const schedLine =
+            job.once === true
+              ? `Once: ${job.runAt ?? "?"} (grace ${job.graceMs ?? DEFAULT_ONCE_GRACE_MS}ms)`
+              : `Schedule: ${job.schedule} (${job.timezone ?? SYSTEM_TZ})`;
+          const nextDate =
+            job.once === true && job.runAt && !Number.isNaN(Date.parse(job.runAt))
+              ? new Date(job.runAt)
+              : job.schedule
+                ? nextCronDate(parseCron(job.schedule), new Date(), job.timezone ?? SYSTEM_TZ)
+                : null;
+          const nextStr = formatNextRun(nextDate, new Date());
           const infoLines = [
             `Task: ${job.id}`,
             `Description: ${desc}`,
-            `Schedule: ${job.schedule} (${job.timezone ?? SYSTEM_TZ})`,
-            `Next Run: ${next ? next.toLocaleString() : "none"} (${nextStr})`,
+            schedLine,
+            `Next Run: ${nextDate ? nextDate.toLocaleString() : "none"} (${nextStr})`,
             `State: ${st.enabled ? "enabled" : "disabled"} | Fails: ${st.fails}/3 | Last: ${st.lastStatus ?? "never"}`,
             `Last Run At: ${st.lastRunAt ?? "never"}`,
             `Steps (${job.steps.length}): ${job.steps.map((s) => s.name).join(" -> ")}`,
@@ -729,7 +751,7 @@ const SYSTEM_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
           jobs
             .map((j) => {
               const st = store.state(j.id, j.enabled);
-              return `${st.enabled ? "●" : "⛔"} ${j.id} @ ${j.schedule} fails:${st.fails}/3 last:${st.lastStatus ?? "never"}`;
+              return `${st.enabled ? "●" : "⛔"} ${j.id} @ ${j.once === true ? `once ${j.runAt ?? "?"}` : j.schedule} fails:${st.fails}/3 last:${st.lastStatus ?? "never"}`;
             })
             .join("\n"),
           "info",

@@ -56,7 +56,6 @@
         "additionalProperties": false,
         "required": [
           "id",
-          "schedule",
           "steps"
         ],
         "properties": {
@@ -72,7 +71,8 @@
           },
           "schedule": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Cron expression; required unless once=true."
           },
           "timezone": {
             "type": "string"
@@ -247,6 +247,19 @@
             "items": {
               "type": "string"
             }
+          },
+          "once": {
+            "type": "boolean",
+            "description": "Ephemeral one-shot: fire once at runAt, then auto-disable."
+          },
+          "runAt": {
+            "type": "string",
+            "description": "Absolute fire time for one-shots (ISO datetime)."
+          },
+          "graceMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Late-fire grace for one-shots in ms."
           }
         }
       }

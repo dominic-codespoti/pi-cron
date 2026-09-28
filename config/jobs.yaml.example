@@ -53,3 +53,17 @@ jobs:
       - name: main
         run: { type: exec, command: "~/bin/pi-sessions-maintenance.sh" }
     report: { mode: none }
+
+  # --- ephemeral one-shot: fires once at runAt, then auto-disables ---
+  # No `schedule` (forbidden with once:true). runAt is absolute ISO with
+  # offset/Z. graceMs (default 86400000) bounds late catch-up after downtime;
+  # older than grace is marked missed. Manual `--run` does NOT consume it.
+  - id: once-example
+    description: "Example one-shot (disabled template)"
+    once: true
+    runAt: "2026-10-02T09:00:00+10:00"
+    enabled: false
+    steps:
+      - name: main
+        run: { type: exec, command: "echo one-shot-fired >> /tmp/once-example.log" }
+    report: { mode: none }

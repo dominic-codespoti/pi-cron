@@ -38,8 +38,9 @@ describe("sinks", () => {
 describe("config", () => {
   it("loads the example config", () => {
     const { jobs } = loadConfig(EXAMPLE);
-    expect(jobs.length).toBe(3);
+    expect(jobs.length).toBe(4);
     expect(jobs[1].steps.map((s) => s.name)).toEqual(["gather", "triage", "write", "intentions"]);
+    expect(jobs[3]).toMatchObject({ id: "once-example", once: true });
   });
   it("rejects unknown keys, bad cron, empty steps", () => {
     const f = path.join(tmp, "bad.yaml");
