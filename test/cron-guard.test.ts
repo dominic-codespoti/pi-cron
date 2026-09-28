@@ -28,7 +28,7 @@ beforeAll(() => {
   fs.writeFileSync(
     path.join(dataDir, "config", "cron-guard.json"),
     JSON.stringify({
-      defaults: { writeRoots: [notes], secretPaths: [path.join(dataDir, "creds")] },
+      defaults: { writeRoots: [notes], secretPaths: [path.join(dataDir, "creds")], denyPaths: [path.join(notes, "work")] },
       steps: {
         "triage/run": { bash: { allow: ["ls", "mv", "mkdir"] } },
         "fixer/run": { bash: "open", writeRoots: ["/tmp/fixer"] },
@@ -73,5 +73,14 @@ describe("cron-guard", () => {
     expect(await blocked("bash", { command: `ls "${notes}"; cat /etc/passwd` })).toBe(true);
     expect(await blocked("bash", { command: `ls $(echo ${notes})` })).toBe(true);
     expect(await blocked("bash", { command: `python3 -c "print(1)"` })).toBe(true);
+  });
+
+  it("denyPaths blocks paths and bash references under the prefix but not searches of the parent", async () => {
+    const blocked = load("triage", "run");
+    expect(await blocked("read", { path: path.join(notes, "work", "client.md") })).toBe(true);
+    expect(await blocked("write", { path: path.join(notes, "work", "new.md") })).toBe(true);
+    expect(await blocked("bash", { command: `mv ${path.join(notes, "inbox.md")} ${path.join(notes, "work")}/` })).toBe(true);
+    expect(await blocked("grep", { pattern: "x", path: notes })).toBe(false);
+    expect(await blocked("read", { path: path.join(notes, "workout.md") })).toBe(false);
   });
 });
